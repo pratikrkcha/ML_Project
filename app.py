@@ -1,7 +1,4 @@
-"""FedDef Streamlit app shell.
-
-Task 1 provides the data/evaluation foundation and this app skeleton.  The
-baseline, attack, and defense tabs are placeholders for Tasks 2-4.
+"""FedDef Streamlit app for the baseline, attack, and defense comparisons.
 
 Run with:
     streamlit run app.py
@@ -19,6 +16,7 @@ from sklearn.linear_model import LogisticRegression
 from src.config import Config
 from src.data import DataBundle, load_data, prepare_data
 from src.evaluate import evaluate_model, format_metrics
+from src.experiments import DEFAULT_STRENGTHS, SETTINGS, run_comparison
 from src.federated import (
     run_federated,
     save_baseline_artifacts,
@@ -72,8 +70,7 @@ def _load_default(
 
 st.title("FedDef — Federated Learning Robustness Demo")
 st.caption(
-    "Task 1 foundation: reproducible data splits and a trustworthy evaluation "
-    "harness. FedAvg, poisoning attacks, and the defense are added in Tasks 2-4."
+    "Compare clean FedAvg, simulated model poisoning, and anomaly-aware aggregation."
 )
 
 with st.sidebar:
@@ -333,20 +330,54 @@ with baseline_tab:
         st.info("No baseline results found yet. Click 'Run FedAvg Baseline Live' above or run `python main.py --baseline`.")
 
 with attack_tab:
-    st.subheader("Model-poisoning attacks")
-    st.info(
-        "Task 4 (Pratik) will add configurable attacks and the experiment matrix."
+    st.subheader("Compare clean, attacked, and defended FedAvg")
+    attack_type = st.selectbox(
+        "Simulated attack", options=list(DEFAULT_STRENGTHS),
+        format_func=lambda name: name.replace("_", " ").capitalize(),
     )
-    st.markdown(
-        """
-        Planned attacks:
-        - random noise
-        - sign flip
-        - scaling
-        - label flipping
-        - colluding attackers
-        """
-    )
+    with st.form("attack_comparison"):
+        first, second = st.columns(2)
+        with first:
+            n_clients = st.number_input("Clients", 2, 100, 20)
+            mal_fraction = st.slider("Malicious-client fraction", 0.0, 0.9, 0.2, 0.05)
+            strength = st.number_input(
+                "Attack strength", min_value=1.0 if attack_type == "scaling" else 0.0,
+                max_value=1.0 if attack_type == "label_flip" else 10.0,
+                value=DEFAULT_STRENGTHS[attack_type], step=0.05,
+                key=f"strength_{attack_type}",
+            )
+        with second:
+            epochs = st.number_input("Communication rounds", 1, 100, 20)
+            lr = st.number_input("Client learning rate", 0.01, 1.0, 0.20, 0.01)
+        submitted = st.form_submit_button("Run comparison")
+
+    if submitted:
+        try:
+            config = Config(
+                seed=seed, test_size=test_size, val_size=val_size,
+                n_clients=int(n_clients), mal_fraction=mal_fraction, epochs=int(epochs),
+                lr=lr, attack_type=attack_type, attack_strength=strength,
+            )
+            with st.spinner("Comparing the three settings on the validation split…"):
+                comparison = run_comparison(bundle, config, evaluate_test=False)
+            st.session_state["attack_comparison_result"] = (comparison, config)
+        except ValueError as exc:
+            st.error(str(exc))
+
+    if "attack_comparison_result" in st.session_state:
+        comparison, run_config = st.session_state["attack_comparison_result"]
+        actual_malicious = int(run_config.n_clients * run_config.mal_fraction)
+        st.caption(
+            f"Last run: seed {run_config.seed}, {run_config.attack_type.replace('_', ' ')}, "
+            f"{actual_malicious}/{run_config.n_clients} malicious clients. Validation metrics."
+        )
+        metric = st.selectbox("Comparison metric", ["accuracy", "f1", "roc_auc"])
+        lines = comparison.pivot(index="epoch", columns="setting", values=metric)
+        st.line_chart(lines.rename(columns=SETTINGS))
+        st.download_button(
+            "Download comparison CSV", comparison.to_csv(index=False),
+            file_name="feddef_comparison.csv", mime="text/csv",
+        )
 
 with defense_tab:
     st.subheader("FEDDEF: Anomaly-Aware Robust Aggregation (Task 3)")

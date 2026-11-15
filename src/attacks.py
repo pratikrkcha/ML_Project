@@ -46,18 +46,12 @@ def random_noise_attack(
 ) -> Params:
     """Replace client parameters with scaled random noise.
 
-    This matches the prototype's attack block:
-        coefs = np.random.rand(coefs.shape[0])
-        intercept = np.random.randint(100000)
-        beta = sigma / (l_r * data_i.shape[0])
-        coefs *= beta
-
-    Here `strength` controls the scale of injected noise.
+    The standard deviation is `strength` per coefficient and ten times
+    `strength` for the scalar intercept, matching the Task 3 simulation.
     """
     coef = np.asarray(params["coef"], dtype=float).ravel()
-    n_features = coef.shape[0]
-    noisy_coef = rng.standard_normal(n_features) * strength
-    noisy_intercept = float(rng.standard_normal() * strength * 10.0)
+    noisy_coef = rng.normal(0.0, strength, size=coef.shape)
+    noisy_intercept = float(rng.normal(0.0, 10.0 * strength))
     return {"coef": noisy_coef, "intercept": noisy_intercept}
 
 
