@@ -27,23 +27,23 @@ Task 2 deliverables completed:
 - 10 comprehensive tests in `tests/test_federated.py` (all 70 tests in the repository pass).
 - App integration in `app.py` for live/persisted baseline comparison.
 
-**Still to come:**
-
-- Task 3: z-score defense and validation protocol (Kunal V Kurundwadkar)
-- Task 4: attack simulation and the full experiment matrix (Team Member 4)
+- **Task 3 (z-score defense and validation protocol)** is implemented by Kunal V Kurundwadkar.
+- **Task 4 (experiment runner, comparisons, and plots)** is implemented by Dewansh Khandelwal after the Task 2/4 swap.
 
 See [`team_plan.md`](team_plan.md) for the workstreams and owners.
 
 ## Repository layout
 
 ```text
-main.py                 CLI: data foundation check + Task 2 baseline runner
-app.py                  Streamlit app shell with live Baseline tab
+main.py                 CLI: foundation, baseline, and defense runs
+run_experiments.py      CLI: matched core or extended experiment matrix
+app.py                  Streamlit baseline, attack, and defense app
 src/
   config.py             shared, validated experiment configuration
   data.py               loading, cleaning, splitting, scaling
   evaluate.py           metrics, JSON saving, confusion-matrix plots
   federated.py          client partitioning, fedavg, local steps, server loop
+  experiments.py        paired scenarios, experiment tables, report plots
 tests/
   conftest.py           synthetic Framingham-shaped fixture
   test_data.py
@@ -198,7 +198,35 @@ Useful options:
 --evaluate-test         also evaluate that smoke model on test
 ```
 
-## Run the app shell
+## Run the Task 4 experiment matrix
+
+With the team's CSV at `data/framingham.csv`, run:
+
+```bash
+python run_experiments.py
+```
+
+The core matrix uses seeds 42–44, 50 rounds, and random noise at malicious-client
+fractions 0%, 10%, 20%, 30%, and 50%. Each seed uses one shared data split and
+client partition. The 0% case checks defense overhead on honest clients.
+
+```bash
+python run_experiments.py --matrix extended --results-dir results/extended
+```
+
+The extended matrix runs random noise, sign flip, scaling, label flip, and
+collusion at a 20% malicious-client fraction. Use `--validation-only` during
+exploration and `--help` for seed, strength, and training overrides.
+
+- `summary.csv` records validation metrics by round and a separate final test row per run.
+- `aggregate.csv` reports mean and sample standard deviation across seeds.
+- `paired_comparisons.csv` reports clean minus attacked and defended minus attacked scores per seed.
+- `plots/` contains convergence, final metrics versus malicious fraction, and defense gain.
+- `experiment_config.json` records the settings and seeds for reruns.
+
+See [Task 4 report notes](reports/task4_report.md) for the evaluation protocol.
+
+## Run the app
 
 ```bash
 streamlit run app.py
@@ -212,7 +240,8 @@ The app currently provides:
 - prepared training-feature preview and metadata
 - a validation-only centralized smoke check
 
-The Baseline, Attack, and Defense tabs are placeholders for Tasks 2–4.
+The Attack tab runs an interactive, validation-only comparison and exports its
+metrics as CSV. Use the CLI for the full multi-seed results and final test metrics.
 
 The old `streamlit.py` prototype was moved to
 [`archive/streamlit_prototype.py`](archive/streamlit_prototype.py). It is not
@@ -253,4 +282,4 @@ See [`team_plan.md`](team_plan.md) for the full four-person plan.
 | Kunal Khandelwal | Foundation, data pipeline, evaluation harness (Task 1) |
 | Pratik Rakhecha | Clean FedAvg baseline + centralized reference (Task 2) |
 | Kunal V Kurundwadkar | Defense mechanism + validation protocol (Task 3) |
-| Team Member 4 | Attack simulation + experiment orchestration (Task 4) |
+| Dewansh Khandelwal | Experiment orchestration and comparisons (Task 4, after the task swap) |

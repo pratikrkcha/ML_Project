@@ -20,8 +20,9 @@ import argparse
 import json
 import os
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 # Set MPLCONFIGDIR to avoid warnings in sandboxed environments
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
@@ -391,6 +392,26 @@ def train_centralized_model(
     return model, val_metrics, test_metrics
 
 
+def train_client_update(
+    client: ClientDataset,
+    global_params: Mapping[str, Any],
+    round_idx: int,
+    *,
+    config: Config,
+    local_epochs: int = 5,
+) -> dict[str, Any]:
+    """Train a client's update using the baseline FedAvg hyperparameters."""
+    return train_local_step(
+        client.X,
+        client.y,
+        global_params,
+        lr=config.lr,
+        local_epochs=local_epochs,
+        class_weight="balanced",
+        seed=config.seed + round_idx * 100 + client.client_id,
+    )
+
+
 def run_federated(
     bundle: DataBundle,
     config: Config | None = None,
@@ -399,8 +420,12 @@ def run_federated(
     local_epochs: int = 5,
     evaluate_test: bool = True,
     verbose: bool = True,
+    client_update: Callable[[ClientDataset, Mapping[str, Any], int], dict[str, Any]] | None = None,
+    aggregate_round: Callable[
+        [list[dict[str, Any]], list[int], Mapping[str, Any]], dict[str, Any]
+    ] | None = None,
 ) -> FederatedResult:
-    """Execute the clean, no-attack Federated Learning baseline server loop.
+    """Execute the federated learning baseline or a custom FedAvg experiment.
 
     Protocols:
     - 'fedavg' (preferred, default): True FedAvg. Clients initialize each round
@@ -416,6 +441,8 @@ def run_federated(
     local_epochs : Number of local steps per round for true FedAvg.
     evaluate_test : Whether to evaluate the final global model on the test split.
     verbose : Whether to print round-by-round progress.
+    client_update : Optional FedAvg client trainer, receiving the broadcast model and round.
+    aggregate_round : Optional FedAvg aggregator, receiving updates, counts and the prior model.
 
     Returns
     -------
@@ -423,11 +450,12 @@ def run_federated(
     """
     if config is None:
         config = Config()
+    if protocol == "one_shot" and (client_update is not None or aggregate_round is not None):
+        raise ValueError("Custom training and aggregation require the fedavg protocol")
 
     n_clients = config.n_clients
     seed = config.seed
     epochs = config.epochs
-    lr = config.lr
 
     # Partition training data
     partitions = partition_dataset(
@@ -453,7 +481,7 @@ def run_federated(
     if verbose:
         print("=" * 68)
         print(f"FedDef Baseline Server — Protocol: {protocol.upper()}")
-        print(f"Clients: {n_clients} | Rounds: {epochs if protocol == 'fedavg' else 1} | lr: {lr} | Seed: {seed}")
+        print(f"Clients: {n_clients} | Rounds: {epochs if protocol == 'fedavg' else 1} | lr: {config.lr} | Seed: {seed}")
         print("=" * 68)
 
     if protocol == "one_shot":
@@ -487,24 +515,20 @@ def run_federated(
 
     elif protocol == "fedavg":
         # True FedAvg: multi-round loop
-        eval_model = create_model_from_params(global_params, feature_names)
+        update_client = client_update or partial(
+            train_client_update, config=config, local_epochs=local_epochs
+        )
 
         for round_idx in range(1, epochs + 1):
-            client_updates = []
-            for client in partitions:
-                upd = train_local_step(
-                    client.X,
-                    client.y,
-                    global_params,
-                    lr=lr,
-                    local_epochs=local_epochs,
-                    class_weight="balanced",
-                    seed=seed + round_idx * 100 + client.client_id,
-                )
-                client_updates.append(upd)
+            client_updates = [
+                update_client(client, global_params, round_idx) for client in partitions
+            ]
 
             # Server aggregates client updates
-            global_params = fedavg(client_updates, client_weights)
+            if aggregate_round is None:
+                global_params = fedavg(client_updates, client_weights)
+            else:
+                global_params = aggregate_round(client_updates, client_weights, global_params)
 
             # Evaluate global model on validation set
             eval_model = create_model_from_params(global_params, feature_names)
